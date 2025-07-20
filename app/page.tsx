@@ -26,21 +26,25 @@ export default function App() {
   // Check for existing session on app load
   useEffect(() => {
     const checkExistingSession = () => {
-      try {
-        const storedAuth = localStorage.getItem("hospigo-auth")
-        const storedUser = localStorage.getItem("hospigo-user")
+      if (typeof window !== 'undefined') {
+        try {
+          const storedAuth = localStorage.getItem("hospigo-auth")
+          const storedUser = localStorage.getItem("hospigo-user")
 
-        if (storedAuth === "true" && storedUser) {
-          const user = JSON.parse(storedUser)
-          setIsAuthenticated(true)
-          setCurrentUser(user)
+          if (storedAuth === "true" && storedUser) {
+            const user = JSON.parse(storedUser)
+            setIsAuthenticated(true)
+            setCurrentUser(user)
+          }
+        } catch (error) {
+          console.error("Error checking existing session:", error)
+          // Clear corrupted data
+          localStorage.removeItem("hospigo-auth")
+          localStorage.removeItem("hospigo-user")
+        } finally {
+          setIsLoading(false)
         }
-      } catch (error) {
-        console.error("Error checking existing session:", error)
-        // Clear corrupted data
-        localStorage.removeItem("hospigo-auth")
-        localStorage.removeItem("hospigo-user")
-      } finally {
+      } else {
         setIsLoading(false)
       }
     }
