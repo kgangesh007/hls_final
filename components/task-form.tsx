@@ -1,8 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 
-const TaskForm = ({ onTaskCreated, availableRobots = 0 }) => {
+const TaskForm = ({ onTaskCreated, availableRobots = 0, robots = [], selectOptimalRobot }) => {
   const API_URL = "https://d0dcaw3418.execute-api.us-east-1.amazonaws.com/dev/tasks"
 
   // Predefined locations
@@ -45,7 +45,7 @@ const TaskForm = ({ onTaskCreated, availableRobots = 0 }) => {
   const PRIORITY_LEVELS = ["Low", "Medium", "High", "Emergency"]
 
   const [form, setForm] = useState({
-    AssignedTo: ROBOT_OPTIONS[0], // Still used for the robot dropdown
+    AssignedTo: "", // Will be auto-selected
     PickupLocation: "",
     DropLocation: "",
     Status: "Pending", // Default status
@@ -59,6 +59,28 @@ const TaskForm = ({ onTaskCreated, availableRobots = 0 }) => {
   const [message, setMessage] = useState("")
   const [createdTaskDetails, setCreatedTaskDetails] = useState(null)
   const [loading, setLoading] = useState(false)
+  const [autoAssignEnabled, setAutoAssignEnabled] = useState(true)
+  const [selectedRobot, setSelectedRobot] = useState("")
+
+  // Auto-assign robot when pickup location changes
+  useEffect(() => {
+    if (autoAssignEnabled && form.PickupLocation && robots.length > 0 && selectOptimalRobot) {
+      const optimalRobot = selectOptimalRobot(form.PickupLocation, robots)
+      setForm((prev) => ({ ...prev, AssignedTo: optimalRobot }))
+      setSelectedRobot(optimalRobot)
+
+      // Show which robot was selected and why
+      const robot = robots.find((r) => r.Robot_Id === optimalRobot)
+      if (robot) {
+        const reason =
+          robot.Status === "Idle" || robot.Status === "Task Completed"
+            ? "closest available robot"
+            : "will finish current task soonest"
+        setMessage(`🤖 Auto-selected ${optimalRobot} (${reason})`)
+        setTimeout(() => setMessage(""), 3000)
+      }
+    }
+  }, [form.PickupLocation, autoAssignEnabled, robots, selectOptimalRobot])
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value })
@@ -70,6 +92,22 @@ const TaskForm = ({ onTaskCreated, availableRobots = 0 }) => {
 
   const handlePriorityLevelClick = (level) => {
     setForm({ ...form, priorityLevel: level })
+  }
+
+  const handleRobotSelection = (robotId) => {
+    setForm({ ...form, AssignedTo: robotId })
+    setSelectedRobot(robotId)
+    setAutoAssignEnabled(false) // Disable auto-assign when manually selected
+  }
+
+  const toggleAutoAssign = () => {
+    setAutoAssignEnabled(!autoAssignEnabled)
+    if (!autoAssignEnabled && form.PickupLocation && robots.length > 0 && selectOptimalRobot) {
+      // Re-enable auto-assign and select optimal robot
+      const optimalRobot = selectOptimalRobot(form.PickupLocation, robots)
+      setForm((prev) => ({ ...prev, AssignedTo: optimalRobot }))
+      setSelectedRobot(optimalRobot)
+    }
   }
 
   const handleSubmit = async (e) => {
@@ -102,6 +140,12 @@ const TaskForm = ({ onTaskCreated, availableRobots = 0 }) => {
       return
     }
 
+    if (!form.AssignedTo) {
+      setMessage("Please select a robot or enable auto-assignment.")
+      setLoading(false)
+      return
+    }
+
     try {
       const res = await fetch(API_URL, {
         method: "POST",
@@ -128,7 +172,7 @@ const TaskForm = ({ onTaskCreated, availableRobots = 0 }) => {
 
         // Reset form fields after successful creation
         setForm({
-          AssignedTo: ROBOT_OPTIONS[0],
+          AssignedTo: "",
           PickupLocation: "",
           DropLocation: "",
           Status: "Pending",
@@ -138,6 +182,9 @@ const TaskForm = ({ onTaskCreated, availableRobots = 0 }) => {
           requestedBy: "",
           specialInstructions: "",
         })
+        setSelectedRobot("")
+        setAutoAssignEnabled(true) // Reset to auto-assign
+
         if (onTaskCreated) {
           onTaskCreated(data.task)
         }
@@ -149,6 +196,20 @@ const TaskForm = ({ onTaskCreated, availableRobots = 0 }) => {
       setMessage("Network error or CORS problem.")
     } finally {
       setLoading(false)
+    }
+  }
+
+  // Get robot status info for display
+  const getRobotStatusInfo = (robotId) => {
+    const robot = robots.find((r) => r.Robot_Id === robotId)
+    if (!robot) return { status: "Unknown", battery: 0, available: false }
+
+    const available = robot.Status === "Idle" || robot.Status === "Task Completed"
+    return {
+      status: robot.Status,
+      battery: Math.round(robot.Battery),
+      available,
+      taskProgress: robot.taskProgress || 0,
     }
   }
 
@@ -186,28 +247,6 @@ const TaskForm = ({ onTaskCreated, availableRobots = 0 }) => {
               </button>
             ))}
           </div>
-        </div>
-
-        {/* Assign Robot */}
-        <div>
-          <label htmlFor="AssignedTo" className="block text-gray-700 text-sm font-bold mb-2">
-            Assign Robot <span className="text-red-500">*</span>
-          </label>
-          <select
-            id="AssignedTo"
-            name="AssignedTo"
-            value={form.AssignedTo}
-            onChange={handleChange}
-            required
-            className="p-2 rounded-md border border-gray-300 w-full focus:ring-blue-500 focus:border-blue-500"
-          >
-            <option value="">-- Select a Robot --</option>
-            {ROBOT_OPTIONS.map((robot) => (
-              <option key={robot} value={robot}>
-                {robot}
-              </option>
-            ))}
-          </select>
         </div>
 
         {/* Pickup Location */}
@@ -252,6 +291,74 @@ const TaskForm = ({ onTaskCreated, availableRobots = 0 }) => {
               </option>
             ))}
           </select>
+        </div>
+
+        {/* Smart Robot Assignment */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-gray-700 text-sm font-bold">
+              Assign Robot <span className="text-red-500">*</span>
+            </label>
+            <button
+              type="button"
+              onClick={toggleAutoAssign}
+              className={`px-3 py-1 rounded-full text-xs font-medium transition duration-200 ${
+                autoAssignEnabled
+                  ? "bg-green-100 text-green-800 hover:bg-green-200"
+                  : "bg-gray-100 text-gray-800 hover:bg-gray-200"
+              }`}
+            >
+              {autoAssignEnabled ? "🤖 Auto-Select ON" : "👤 Manual Select"}
+            </button>
+          </div>
+
+          {autoAssignEnabled ? (
+            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              {form.AssignedTo ? (
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium text-blue-900">{form.AssignedTo}</p>
+                    <p className="text-sm text-blue-700">
+                      Status: {getRobotStatusInfo(form.AssignedTo).status} | Battery:{" "}
+                      {getRobotStatusInfo(form.AssignedTo).battery}% |
+                      {getRobotStatusInfo(form.AssignedTo).available
+                        ? " Available"
+                        : ` Task: ${getRobotStatusInfo(form.AssignedTo).taskProgress}%`}
+                    </p>
+                  </div>
+                  <span className="text-2xl">🎯</span>
+                </div>
+              ) : (
+                <p className="text-blue-700">Select pickup location to auto-assign optimal robot</p>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {ROBOT_OPTIONS.map((robot) => {
+                const robotInfo = getRobotStatusInfo(robot)
+                return (
+                  <button
+                    key={robot}
+                    type="button"
+                    onClick={() => handleRobotSelection(robot)}
+                    className={`p-3 border rounded-lg transition duration-200 text-left ${
+                      selectedRobot === robot
+                        ? "bg-blue-600 text-white border-blue-600"
+                        : robotInfo.available
+                          ? "bg-green-50 border-green-300 hover:bg-green-100"
+                          : "bg-yellow-50 border-yellow-300 hover:bg-yellow-100"
+                    }`}
+                  >
+                    <div className="font-medium">{robot}</div>
+                    <div className="text-xs mt-1">
+                      {robotInfo.status} | {robotInfo.battery}%
+                      {!robotInfo.available && <div>Task: {robotInfo.taskProgress}%</div>}
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+          )}
         </div>
 
         {/* Priority Level */}
@@ -334,7 +441,11 @@ const TaskForm = ({ onTaskCreated, availableRobots = 0 }) => {
       </form>
 
       {message && (
-        <p className={`mt-6 text-center text-sm ${createdTaskDetails ? "text-green-600" : "text-red-600"}`}>
+        <p
+          className={`mt-6 text-center text-sm ${
+            createdTaskDetails ? "text-green-600" : message.includes("Auto-selected") ? "text-blue-600" : "text-red-600"
+          }`}
+        >
           {message}
         </p>
       )}

@@ -94,6 +94,97 @@ export default function App() {
     }
   }
 
+  // Define room positions for distance calculation
+  const ROOM_POSITIONS = {
+    Reception: { x: 100, y: 80 },
+    Radiology: { x: 220, y: 80 },
+    Pharmacy: { x: 340, y: 80 },
+    Laboratory: { x: 460, y: 80 },
+    Emergency: { x: 100, y: 160 },
+    "Main Corridor": { x: 340, y: 160 },
+    "Ward A": { x: 100, y: 240 },
+    "Ward B": { x: 220, y: 240 },
+    "Surgery 1": { x: 340, y: 240 },
+    "Surgery 2": { x: 460, y: 240 },
+    ICU: { x: 580, y: 240 },
+    Kitchen: { x: 100, y: 320 },
+    Laundry: { x: 220, y: 320 },
+    "Waste Mgmt": { x: 340, y: 320 },
+    Storage: { x: 460, y: 320 },
+    "Charging 1": { x: 70, y: 290 },
+    "Charging 2": { x: 540, y: 210 },
+  }
+
+  // Function to calculate distance between two points
+  const calculateDistance = (pos1, pos2) => {
+    const dx = pos1.x - pos2.x
+    const dy = pos1.y - pos2.y
+    return Math.sqrt(dx * dx + dy * dy)
+  }
+
+  // Function to get robot's current position
+  const getRobotCurrentPosition = (robot) => {
+    if (robot.Status === "Charging") {
+      return ROOM_POSITIONS["Charging 1"] || ROOM_POSITIONS["Main Corridor"]
+    } else if (robot.Status === "Active") {
+      return ROOM_POSITIONS[robot.PickupLocation] || ROOM_POSITIONS["Main Corridor"]
+    } else if (robot.Status === "Task Completed" || robot.Status === "Idle") {
+      return ROOM_POSITIONS[robot.DropLocation] || ROOM_POSITIONS["Main Corridor"]
+    }
+    return ROOM_POSITIONS["Main Corridor"]
+  }
+
+  // Smart robot selection function
+  const selectOptimalRobot = (pickupLocation, robots) => {
+    const pickupPos = ROOM_POSITIONS[pickupLocation]
+    if (!pickupPos) return robots[0]?.Robot_Id // Fallback to first robot
+
+    // Filter available robots (Idle or Task Completed)
+    const availableRobots = robots.filter((robot) => robot.Status === "Idle" || robot.Status === "Task Completed")
+
+    if (availableRobots.length > 0) {
+      // Find the closest available robot
+      let closestRobot = availableRobots[0]
+      let minDistance = Number.POSITIVE_INFINITY
+
+      availableRobots.forEach((robot) => {
+        const robotPos = getRobotCurrentPosition(robot)
+        const distance = calculateDistance(pickupPos, robotPos)
+
+        // Prioritize robots with higher battery levels if distances are similar
+        const batteryBonus = robot.Battery / 1000 // Small bonus for higher battery
+        const adjustedDistance = distance - batteryBonus
+
+        if (adjustedDistance < minDistance) {
+          minDistance = adjustedDistance
+          closestRobot = robot
+        }
+      })
+
+      return closestRobot.Robot_Id
+    }
+
+    // If no robots are available, find the one that will finish soonest
+    const activeRobots = robots.filter((robot) => robot.Status === "Active")
+
+    if (activeRobots.length > 0) {
+      let soonestRobot = activeRobots[0]
+      let maxProgress = -1
+
+      activeRobots.forEach((robot) => {
+        if (robot.taskProgress > maxProgress) {
+          maxProgress = robot.taskProgress
+          soonestRobot = robot
+        }
+      })
+
+      return soonestRobot.Robot_Id
+    }
+
+    // Fallback to first robot if no logic applies
+    return robots[0]?.Robot_Id || "Robot-A1"
+  }
+
   // Predefined sample tasks for robots to show by default
   const getDefaultTaskForRobot = (robotId) => {
     const defaultTasks = {
@@ -630,7 +721,12 @@ export default function App() {
           {/* Content Area */}
           <div className="flex-grow">
             {activeTab === "createTask" && (
-              <TaskForm onTaskCreated={handleTaskCreated} availableRobots={availableRobots} />
+              <TaskForm
+                onTaskCreated={handleTaskCreated}
+                availableRobots={availableRobots}
+                robots={robots}
+                selectOptimalRobot={selectOptimalRobot}
+              />
             )}
             {activeTab === "robotById" && <RobotInfoById />}
             {activeTab === "hospitalLayout" && <HospitalLayout robots={robots} />}
